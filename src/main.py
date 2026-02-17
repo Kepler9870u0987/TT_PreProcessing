@@ -18,6 +18,7 @@ from typing import List, Optional, Dict, Any
 import time
 import structlog
 
+from src.__version__ import __version__
 from src.models import InputEmail, EmailDocument
 from src.preprocessing import preprocess_email, preprocess_email_batch
 from src.error_handling import preprocess_email_safe, is_email_processable
@@ -27,16 +28,19 @@ from src.config import get_config
 logger = structlog.get_logger(__name__)
 
 # FastAPI app
+
 app = FastAPI(
     title="Email Preprocessing Service",
     description="GDPR-compliant email preprocessing for Thread Classificator Mail",
-    version="1.0.0",
+    version=__version__,
 )
 
-# CORS middleware
+# CORS middleware - configured via environment variables
+# Set PREPROCESSING_ALLOWED_ORIGINS=["https://yourdomain.com"] in production
+config = get_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
+    allow_origins=config.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,6 +65,8 @@ class PreprocessRequest(BaseModel):
     def to_input_email(self) -> InputEmail:
         """Convert to InputEmail model"""
         import base64
+        from email.parser import Parser
+        from email.policy import default
 
         raw_bytes_decoded = None
         if self.raw_bytes:
@@ -69,10 +75,35 @@ class PreprocessRequest(BaseModel):
             except Exception as e:
                 logger.warning("raw_bytes_decode_failed", error=str(e))
 
+        # Parse headers
+        parser = Parser(policy=default)
+        msg = parser.parsestr(self.headers_raw)
+        
+        headers_dict = {k.lower(): v for k, v in msg.items()}
+        
+        # Extract required fields from headers
+        from_addr = headers_dict.get("from", "unknown@unknown.com")
+        to_addrs = headers_dict.get("to", "").split(",")
+        to_addrs = [addr.strip() for addr in to_addrs if addr.strip()]
+        if not to_addrs:
+            to_addrs = ["unknown@unknown.com"]
+        subject = headers_dict.get("subject", "(no subject)")
+        date_str = headers_dict.get("date", "")
+
         return InputEmail(
-            message_id=self.message_id,
-            headers_raw=self.headers_raw,
+            uid="api-request",
+            uidvalidity="1",
+            mailbox="API",
+            from_addr=from_addr,
+            to_addrs=to_addrs,
+            subject=subject,
+            date=date_str,
             body_text=self.body_text,
+            body_html="",
+            size=len(self.body_text),
+            headers=headers_dict,
+            message_id=self.message_id,
+            fetched_at="",
             raw_bytes=raw_bytes_decoded,
         )
 
@@ -190,12 +221,12 @@ async def preprocess_endpoint(request: PreprocessRequest):
 
     return PreprocessResponse(
         message_id=result.message_id,
-        headers=result.headers,
-        body_text=result.body_text,
-        body_hash=result.body_hash,
-        pii_redactions_count=len(result.pii_redactions),
+        headers=result.headers_canonical,
+        body_text=result.body_text_canonical,
+        body_hash=result.body_original_hash,
+        pii_redactions_count=len(result.pii_entities),
         removed_sections_count=len(result.removed_sections),
-        pipeline_version=result.pipeline_version.version,
+        pipeline_version=str(result.pipeline_version),
         processing_time_ms=round(processing_time_ms, 2),
     )
 
@@ -220,12 +251,12 @@ async def preprocess_safe_endpoint(request: PreprocessRequest):
 
     return PreprocessResponse(
         message_id=result.message_id,
-        headers=result.headers,
-        body_text=result.body_text,
-        body_hash=result.body_hash,
-        pii_redactions_count=len(result.pii_redactions),
+        headers=result.headers_canonical,
+        body_text=result.body_text_canonical,
+        body_hash=result.body_original_hash,
+        pii_redactions_count=len(result.pii_entities),
         removed_sections_count=len(result.removed_sections),
-        pipeline_version=result.pipeline_version.version,
+        pipeline_version=str(result.pipeline_version),
         processing_time_ms=round(processing_time_ms, 2),
     )
 
@@ -255,12 +286,12 @@ async def preprocess_batch_endpoint(request: BatchPreprocessRequest):
         responses.append(
             PreprocessResponse(
                 message_id=result.message_id,
-                headers=result.headers,
-                body_text=result.body_text,
-                body_hash=result.body_hash,
-                pii_redactions_count=len(result.pii_redactions),
+                headers=result.headers_canonical,
+                body_text=result.body_text_canonical,
+                body_hash=result.body_original_hash,
+                pii_redactions_count=len(result.pii_entities),
                 removed_sections_count=len(result.removed_sections),
-                pipeline_version=result.pipeline_version.version,
+                pipeline_version=str(result.pipeline_version),
                 processing_time_ms=0,  # Individual timing not tracked in batch
             )
         )
@@ -270,7 +301,7 @@ async def preprocess_batch_endpoint(request: BatchPreprocessRequest):
     return BatchPreprocessResponse(
         results=responses,
         total_count=len(results),
-        success_count=len([r for r in results if "error" not in r.pipeline_version.version.lower()]),
+        success_count=len([r for r in results if "error" not in str(r.pipeline_version).lower()]),
         processing_time_ms=round(processing_time_ms, 2),
     )
 
@@ -372,7 +403,7 @@ async def startup_event():
     # Pre-load config
     try:
         config = get_config()
-        logger.info("config_loaded", pipeline_version=config.pipeline_version)
+        logger.info("config_loaded", app_version=__version__)
     except Exception as e:
         logger.error("config_load_failed", error=str(e))
     

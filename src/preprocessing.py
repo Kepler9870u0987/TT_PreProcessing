@@ -9,6 +9,7 @@ import hashlib
 from typing import Optional, List, Dict, Any
 import structlog
 
+from src.__version__ import __version__
 from src.models import InputEmail, EmailDocument, PIIRedaction, PipelineVersion
 from src.parsing import parse_headers_rfc5322, extract_body_parts_from_truncated, merge_body_parts
 from src.canonicalization import canonicalize_text
@@ -48,7 +49,8 @@ def preprocess_email(input_email: InputEmail) -> EmailDocument:
     
     # STEP 1: Parse headers
     try:
-        headers = parse_headers_rfc5322(input_email.headers_raw)
+        # Headers già parsati da InputEmail
+        headers = input_email.headers
         logger.debug("headers_parsed", count=len(headers))
     except Exception as e:
         logger.warning("headers_parse_failed", error=str(e))
@@ -106,17 +108,38 @@ def preprocess_email(input_email: InputEmail) -> EmailDocument:
         body_hash = ""
     
     # STEP 7: Create EmailDocument
+    import datetime
+    start_ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+    
     email_doc = EmailDocument(
+        # Original identifiers
+        uid=input_email.uid,
+        uidvalidity=input_email.uidvalidity,
+        mailbox=input_email.mailbox,
         message_id=input_email.message_id,
-        headers=redacted_headers,
-        body_text=redacted_body,
-        body_hash=body_hash,
-        pii_redactions=pii_redactions,
+        fetched_at=input_email.fetched_at,
+        size=input_email.size,
+        
+        # Processed headers
+        from_addr_redacted=redacted_headers.get('from', '[PII_EMAIL]'),
+        to_addrs_redacted=[addr.strip() for addr in redacted_headers.get('to', '').split(',') if addr.strip()],
+        subject_canonical=redacted_headers.get('subject', ''),
+        date_parsed=redacted_headers.get('date', ''),
+        headers_canonical=redacted_headers,
+        
+        # Body
+        body_text_canonical=redacted_body,
+        body_html_canonical='',  # Not handling HTML for now
+        body_original_hash=body_hash,
+        
+        # Metadata
         removed_sections=removed_sections,
-        pipeline_version=PipelineVersion(
-            version=config.pipeline_version,
-            preprocessing_layer="1.0.0",  # TODO: Read from __version__
-        ),
+        pii_entities=pii_redactions,
+        
+        # Versioning
+        pipeline_version=PipelineVersion(),
+        processing_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        processing_duration_ms=int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000) - start_ms,
     )
     
     logger.info(
@@ -196,18 +219,37 @@ def _create_error_document(input_email: InputEmail, error: str) -> EmailDocument
         Minimal EmailDocument with error info in body
     """
     config = get_config()
+    import datetime
     
     return EmailDocument(
+        # Original identifiers
+        uid=input_email.uid,
+        uidvalidity=input_email.uidvalidity,
+        mailbox=input_email.mailbox,
         message_id=input_email.message_id,
-        headers={"preprocessing-error": error},
-        body_text=f"[PREPROCESSING ERROR: {error}]",
-        body_hash="",
-        pii_redactions=[],
+        fetched_at=input_email.fetched_at,
+        size=input_email.size,
+        
+        # Processed headers
+        from_addr_redacted='[ERROR]',
+        to_addrs_redacted=[],
+        subject_canonical='[ERROR]',
+        date_parsed='',
+        headers_canonical={"preprocessing-error": error},
+        
+        # Body
+        body_text_canonical=f"[PREPROCESSING ERROR: {error}]",
+        body_html_canonical='',
+        body_original_hash="",
+        
+        # Metadata
         removed_sections=[],
-        pipeline_version=PipelineVersion(
-            version=config.pipeline_version,
-            preprocessing_layer="1.0.0",
-        ),
+        pii_entities=[],
+        
+        # Versioning
+        pipeline_version=PipelineVersion(),
+        processing_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        processing_duration_ms=0,
     )
 
 
@@ -234,10 +276,10 @@ def validate_determinism(input_email: InputEmail, runs: int = 3) -> bool:
         # Compare body_text, headers, pii_redactions
         results.append(
             {
-                "body_text": result.body_text,
-                "headers": result.headers,
-                "pii_count": len(result.pii_redactions),
-                "body_hash": result.body_hash,
+                "body_text": result.body_text_canonical,
+                "headers": result.headers_canonical,
+                "pii_count": len(result.pii_entities),
+                "body_hash": result.body_original_hash,
             }
         )
     
@@ -269,10 +311,10 @@ def get_preprocessing_stats(email_doc: EmailDocument) -> Dict[str, Any]:
     """
     return {
         "message_id": email_doc.message_id,
-        "body_length": len(email_doc.body_text),
-        "pii_redactions_count": len(email_doc.pii_redactions),
-        "pii_types": list({r.type for r in email_doc.pii_redactions}),
+        "body_length": len(email_doc.body_text_canonical),
+        "pii_redactions_count": len(email_doc.pii_entities),
+        "pii_types": list({r.type for r in email_doc.pii_entities}),
         "removed_sections_count": len(email_doc.removed_sections),
-        "header_count": len(email_doc.headers),
-        "pipeline_version": email_doc.pipeline_version.version,
+        "header_count": len(email_doc.headers_canonical),
+        "pipeline_version": str(email_doc.pipeline_version),
     }

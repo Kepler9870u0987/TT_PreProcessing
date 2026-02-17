@@ -14,6 +14,7 @@ Garantisce che nessuna email venga persa, anche con errori.
 import structlog
 from typing import Optional
 
+from src.__version__ import __version__
 from src.models import (
     InputEmail,
     EmailDocument,
@@ -90,12 +91,8 @@ def preprocess_email_regex_only(input_email: InputEmail) -> EmailDocument:
     
     logger.info("preprocessing_regex_only", message_id=input_email.message_id)
     
-    # Parse headers
-    try:
-        headers = parse_headers_rfc5322(input_email.headers_raw)
-    except Exception as e:
-        logger.warning("headers_parse_failed_regex_only", error=str(e))
-        headers = {}
+    # Headers già parsati
+    headers = input_email.headers
     
     # Use body_text as-is (no full MIME parse, no canonicalization)
     body = input_email.body_text or ""
@@ -119,19 +116,38 @@ def preprocess_email_regex_only(input_email: InputEmail) -> EmailDocument:
     
     # Compute hash
     body_hash = _compute_body_hash(redacted_body)
+    import datetime
     
     # Create document
     return EmailDocument(
+        # Original identifiers
+        uid=input_email.uid,
+        uidvalidity=input_email.uidvalidity,
+        mailbox=input_email.mailbox,
         message_id=input_email.message_id,
-        headers=redacted_headers,
-        body_text=redacted_body,
-        body_hash=body_hash,
-        pii_redactions=redactions,
+        fetched_at=input_email.fetched_at,
+        size=input_email.size,
+        
+        # Processed headers
+        from_addr_redacted=redacted_headers.get('from', '[PII_EMAIL]'),
+        to_addrs_redacted=[addr.strip() for addr in redacted_headers.get('to', '').split(',') if addr.strip()],
+        subject_canonical=redacted_headers.get('subject', ''),
+        date_parsed=redacted_headers.get('date', ''),
+        headers_canonical=redacted_headers,
+        
+        # Body
+        body_text_canonical=redacted_body,
+        body_html_canonical='',
+        body_original_hash=body_hash,
+        
+        # Metadata
         removed_sections=[],  # No canonicalization
-        pipeline_version=PipelineVersion(
-            version=f"{config.pipeline_version}-regex-only",
-            preprocessing_layer="1.0.0",
-        ),
+        pii_entities=redactions,
+        
+        # Versioning
+        pipeline_version=PipelineVersion(),
+        processing_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        processing_duration_ms=0,
     )
 
 
@@ -152,11 +168,8 @@ def preprocess_email_no_canon(input_email: InputEmail) -> EmailDocument:
     
     logger.info("preprocessing_no_canon", message_id=input_email.message_id)
     
-    # Parse headers
-    try:
-        headers = parse_headers_rfc5322(input_email.headers_raw)
-    except Exception:
-        headers = {}
+    # Headers già parsati
+    headers = input_email.headers
     
     # Use body_text as-is
     body = input_email.body_text or ""
@@ -176,18 +189,37 @@ def preprocess_email_no_canon(input_email: InputEmail) -> EmailDocument:
         redacted_headers = headers
     
     body_hash = _compute_body_hash(redacted_body)
+    import datetime
     
     return EmailDocument(
+        # Original identifiers
+        uid=input_email.uid,
+        uidvalidity=input_email.uidvalidity,
+        mailbox=input_email.mailbox,
         message_id=input_email.message_id,
-        headers=redacted_headers,
-        body_text=redacted_body,
-        body_hash=body_hash,
-        pii_redactions=redactions,
+        fetched_at=input_email.fetched_at,
+        size=input_email.size,
+        
+        # Processed headers
+        from_addr_redacted=redacted_headers.get('from', '[PII_EMAIL]'),
+        to_addrs_redacted=[addr.strip() for addr in redacted_headers.get('to', '').split(',') if addr.strip()],
+        subject_canonical=redacted_headers.get('subject', ''),
+        date_parsed=redacted_headers.get('date', ''),
+        headers_canonical=redacted_headers,
+        
+        # Body
+        body_text_canonical=redacted_body,
+        body_html_canonical='',
+        body_original_hash=body_hash,
+        
+        # Metadata
         removed_sections=[],
-        pipeline_version=PipelineVersion(
-            version=f"{config.pipeline_version}-no-canon",
-            preprocessing_layer="1.0.0",
-        ),
+        pii_entities=redactions,
+        
+        # Versioning
+        pipeline_version=PipelineVersion(),
+        processing_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        processing_duration_ms=0,
     )
 
 
@@ -208,26 +240,42 @@ def create_minimal_document(input_email: InputEmail) -> EmailDocument:
     
     logger.warning("creating_minimal_document", message_id=input_email.message_id)
     
-    # Try to parse headers, but don't fail
-    try:
-        headers = parse_headers_rfc5322(input_email.headers_raw)
-    except Exception:
-        headers = {"from": "unknown", "subject": "unknown"}
+    # Headers già parsati
+    headers = input_email.headers if input_email.headers else {"from": "unknown", "subject": "unknown"}
     
     body = input_email.body_text or "[BODY UNAVAILABLE]"
     body_hash = _compute_body_hash(body)
+    import datetime
     
     return EmailDocument(
+        # Original identifiers
+        uid=input_email.uid,
+        uidvalidity=input_email.uidvalidity,
+        mailbox=input_email.mailbox,
         message_id=input_email.message_id,
-        headers=headers,
-        body_text=body,
-        body_hash=body_hash,
-        pii_redactions=[],
+        fetched_at=input_email.fetched_at,
+        size=input_email.size,
+        
+        # Processed headers
+        from_addr_redacted=headers.get('from', 'unknown'),
+        to_addrs_redacted=[addr.strip() for addr in headers.get('to', '').split(',') if addr.strip()],
+        subject_canonical=headers.get('subject', 'unknown'),
+        date_parsed=headers.get('date', ''),
+        headers_canonical=headers,
+        
+        # Body
+        body_text_canonical=body,
+        body_html_canonical='',
+        body_original_hash=body_hash,
+        
+        # Metadata
         removed_sections=[],
-        pipeline_version=PipelineVersion(
-            version=f"{config.pipeline_version}-minimal",
-            preprocessing_layer="1.0.0",
-        ),
+        pii_entities=[],
+        
+        # Versioning
+        pipeline_version=PipelineVersion(),
+        processing_timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        processing_duration_ms=0,
     )
 
 
@@ -358,8 +406,8 @@ def is_email_processable(input_email: InputEmail) -> tuple[bool, Optional[str]]:
     if not input_email.body_text and not input_email.raw_bytes:
         return False, "Empty email body"
     
-    # Check headers_raw is string
-    if not isinstance(input_email.headers_raw, str):
-        return False, "Invalid headers_raw type"
+    # Check headers exist
+    if not input_email.headers:
+        return False, "Missing headers"
     
     return True, None

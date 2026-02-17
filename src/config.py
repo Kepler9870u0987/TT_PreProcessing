@@ -106,6 +106,14 @@ class PreprocessingConfig(BaseSettings):
     )
 
     # ==========================================================================
+    # API & Security Settings
+    # ==========================================================================
+    allowed_origins: list[str] = Field(
+        default=["http://localhost:8000", "http://localhost:3000"],
+        description="CORS allowed origins. Use ['*'] for development only, restrict in production",
+    )
+
+    # ==========================================================================
     # Logging Settings
     # ==========================================================================
     log_level: str = Field(
