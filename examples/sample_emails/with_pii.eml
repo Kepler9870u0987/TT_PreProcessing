@@ -1,0 +1,23 @@
+From: cliente@example.com
+To: privacy@company.com
+Subject: Aggiornamento dati personali
+Date: Wed, 19 Feb 2026 09:15:00 +0100
+Message-ID: <pii001@example.com>
+Content-Type: text/plain; charset=utf-8
+
+Gentile team,
+
+vorrei aggiornare i miei dati:
+
+Nome: Marco Verdi
+Email: marco.verdi@personal.it
+Telefono: +39 333 1234567
+Telefono ufficio: 02 87654321
+Codice Fiscale: VRDMRC85D15F205X
+P.IVA: IT12345678901
+IBAN: IT60X0542811101000000123456
+
+Vi prego di procedere all'aggiornamento.
+
+Cordiali saluti,
+Marco Verdi

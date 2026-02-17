@@ -68,6 +68,11 @@ def parse_headers_rfc5322(raw_bytes: bytes) -> Dict[str, str]:
             else:
                 headers[key_lower] = decoded_value
 
+        # Validation: an email must have at least some basic headers
+        # If we got an empty dict, the input was likely not a valid email
+        if not headers:
+            raise ValueError("No valid RFC5322 headers found in input")
+
         return headers
 
     except Exception as e:
@@ -252,7 +257,7 @@ def _get_part_content(part: Message) -> str:
 # ==============================================================================
 
 
-def html_to_text_robust(html: str) -> str:
+def html_to_text_robust(html_content: str) -> str:
     """
     Conversione HTML→text robusta e deterministica.
     
@@ -263,39 +268,39 @@ def html_to_text_robust(html: str) -> str:
     1. HTML entity decoding (html.unescape)
     2. Parse con BeautifulSoup (lxml parser)
     3. Remove script/style/meta tags
-    4. Convert con html2text (markdown-like, deterministico)
+    4. Get text with whitespace cleanup
     5. Cleanup whitespace
     
     Args:
-        html: HTML string to convert
+        html_content: HTML string to convert
         
     Returns:
         Plain text representation
     """
-    if not html or not html.strip():
+    if not html_content or not html_content.strip():
         return ""
 
     try:
         # BUG-008 MITIGATION: Decode HTML entities first
-        html = html.unescape(html)
+        html_content = html.unescape(html_content)
 
-        # Parse HTML with robust parser
-        soup = BeautifulSoup(html, "lxml")
+        # Parse HTML with robust parser (html.parser is built-in, no extra deps)
+        soup = BeautifulSoup(html_content, "html.parser")
 
         # Remove script, style, meta tags (non-content elements)
         for tag in soup(["script", "style", "meta", "link", "noscript"]):
             tag.decompose()
 
-        # Convert to text preserving structure
-        h = html2text.HTML2Text()
-        h.ignore_links = False  # Keep links for potential analysis
-        h.ignore_images = True  # Skip images
-        h.ignore_emphasis = False  # Keep bold/italic markers
-        h.body_width = 0  # No line wrapping (preserve original formatting)
-        h.unicode_snob = True  # Use unicode instead of ASCII
-        h.decode_errors = "ignore"  # Skip decode errors
+        # Preserve links by adding URL after link text
+        for a_tag in soup.find_all("a", href=True):
+            href = a_tag.get("href", "")
+            if href and not href.startswith("#"):  # Skip anchor links
+                # Add URL in parentheses after link text
+                link_text = a_tag.get_text()
+                a_tag.string = f"{link_text} ({href})"
 
-        text = h.handle(str(soup))
+        # Get text directly (simpler and more reliable than html2text)
+        text = soup.get_text(separator="\n", strip=True)
 
         # Cleanup whitespace
         text = _cleanup_whitespace(text)
@@ -303,14 +308,9 @@ def html_to_text_robust(html: str) -> str:
         return text.strip()
 
     except Exception as e:
-        logger.warning("html_to_text_failed", error=str(e), html_preview=html[:100])
-        # Fallback: return soup.get_text() which is simpler but less structured
-        try:
-            soup = BeautifulSoup(html, "lxml")
-            return _cleanup_whitespace(soup.get_text())
-        except Exception:
-            # Last resort: return as-is
-            return html
+        logger.warning("html_to_text_failed", error=str(e), html_preview=html_content[:100])
+        # Fallback: return empty string
+        return ""
 
 
 def _cleanup_whitespace(text: str) -> str:

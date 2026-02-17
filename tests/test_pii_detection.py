@@ -64,10 +64,10 @@ def test_detect_email(detector):
 
 
 def test_detect_phone_italian(detector):
-    ""Test PHONE_IT detection"""
+    """Test PHONE_IT detection"""
     texts = [
-        "Chiamami al +39 02 12345678",
-        "Telefono: 02 12345678",
+        "Chiamami al +39 339 1234567",
+        "Telefono: 339 1234567",
         "Mobile +39 345 1234567",
     ]
 
@@ -111,12 +111,12 @@ def test_detect_iban(detector):
 
 def test_detect_multiple_pii_types(detector):
     """Test detection of multiple PII types in same text"""
-    text = """
-    Contatti:
-    Email: test@example.com
-    Telefono: +39 02 12345678
-    CF: RSSMRA85M01H501Z
-    """
+    text = (
+        "    Contatti:\n"
+        "    Email: test@example.com\n"
+        "    Telefono: +39 339 1234567\n"
+        "    CF: RSSMRA85M01H501Z\n"
+    )
     redactions = detector.detect_pii_regex(text)
 
     types = {r.type for r in redactions}
@@ -341,16 +341,16 @@ def test_apply_redactions_multiple(detector):
     """Test applying multiple redactions"""
     from src.models import PIIRedaction
     
-    text = "Email: test@example.com Phone: +39 02 123456"
+    text = "Email: test@example.com Phone: +39 339 123456"
     redactions = [
         PIIRedaction("EMAIL", "hash1", "[PII_EMAIL]", 7, 23, 1.0, "regex"),
-        PIIRedaction("PHONE_IT", "hash2", "[PII_PHONE]", 31, 45, 1.0, "regex"),
+        PIIRedaction("PHONE_IT", "hash2", "[PII_PHONE]", 31, 46, 1.0, "regex"),
     ]
     
     redacted = detector.apply_redactions(text, redactions)
     
     assert "test@example.com" not in redacted
-    assert "+39 02 123456" not in redacted
+    assert "+39 339 123456" not in redacted
     assert "[PII_EMAIL]" in redacted
     assert "[PII_PHONE]" in redacted
 

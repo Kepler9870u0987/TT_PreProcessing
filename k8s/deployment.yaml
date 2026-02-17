@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: preprocessing-secrets
+  namespace: default
+type: Opaque
+stringData:
+  # Generate secure salt: python -c "import secrets; print(secrets.token_hex(32))"
+  pii-salt: "REPLACE-WITH-SECURE-SALT-64-CHARS-MINIMUM"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: preprocessing-config
+  namespace: default
+data:
+  PREPROCESSING_PIPELINE_VERSION: "1.0.0"
+  PREPROCESSING_LOG_LEVEL: "INFO"
+  PREPROCESSING_SPACY_MODEL: "it_core_news_lg"
+  PREPROCESSING_MAX_BODY_SIZE_KB: "500"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-preprocessing
+  namespace: default
+  labels:
+    app: email-preprocessing
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: email-preprocessing
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: email-preprocessing
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: preprocessing
+        image: email-preprocessing:1.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        env:
+        - name: PREPROCESSING_PII_SALT
+          valueFrom:
+            secretKeyRef:
+              name: preprocessing-secrets
+              key: pii-salt
+        envFrom:
+        - configMapRef:
+            name: preprocessing-config
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: email-preprocessing
+  namespace: default
+  labels:
+    app: email-preprocessing
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: email-preprocessing
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: email-preprocessing-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: email-preprocessing
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

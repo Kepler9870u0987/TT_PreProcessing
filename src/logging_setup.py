@@ -82,13 +82,14 @@ def _filter_dict_recursive(data: Dict[str, Any]) -> Dict[str, Any]:
 # ==============================================================================
 
 
-def setup_logging(log_level: str = "INFO", json_format: bool = True) -> None:
+def setup_logging(log_level: str = "INFO", json_format: bool = True, stream=None) -> None:
     """
     Configure structlog per l'applicazione.
     
     Args:
         log_level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         json_format: Se True, output in JSON. Se False, console human-readable.
+        stream: Optional output stream (defaults to sys.stdout)
     
     Features:
         - JSON output per produzione
@@ -100,11 +101,15 @@ def setup_logging(log_level: str = "INFO", json_format: bool = True) -> None:
     # Convert log level string to logging constant
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
 
+    # Use provided stream or default to sys.stdout
+    output_stream = stream if stream is not None else sys.stdout
+
     # Configure standard library logging
     logging.basicConfig(
         format="%(message)s",
-        stream=sys.stdout,
+        stream=output_stream,
         level=numeric_level,
+        force=True,  # Force reconfiguration
     )
 
     # Define processors
@@ -129,7 +134,7 @@ def setup_logging(log_level: str = "INFO", json_format: bool = True) -> None:
         processors=processors,
         wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.PrintLoggerFactory(file=output_stream),
         cache_logger_on_first_use=True,
     )
 

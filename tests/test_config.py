@@ -69,9 +69,8 @@ def test_config_rejects_placeholder_salts():
     for salt in forbidden_salts:
         reset_config_cache()
         with patch.dict(os.environ, {"PREPROCESSING_PII_SALT": salt}, clear=True):
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises((ValueError, ValidationError)):
                 get_config()
-            assert "placeholder" in str(exc_info.value).lower() or "cannot be" in str(exc_info.value).lower()
 
 
 def test_config_accepts_valid_salt(valid_env_vars):

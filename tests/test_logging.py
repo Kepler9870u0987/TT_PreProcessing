@@ -107,7 +107,7 @@ def test_all_sensitive_fields_covered():
 
 def test_setup_logging_json_format(capture_logs):
     """Test logging setup with JSON format"""
-    setup_logging("INFO", json_format=True)
+    setup_logging("INFO", json_format=True, stream=capture_logs)
     logger = get_logger("test")
 
     logger.info("test_event", uid="12345", value=42)
@@ -120,12 +120,12 @@ def test_setup_logging_json_format(capture_logs):
     assert log_entry["uid"] == "12345"
     assert log_entry["value"] == 42
     assert "timestamp" in log_entry
-    assert log_entry["log_level"] == "info"
+    assert log_entry["level"] == "info"
 
 
 def test_setup_logging_console_format(capture_logs):
     """Test logging setup with console (human-readable) format"""
-    setup_logging("INFO", json_format=False)
+    setup_logging("INFO", json_format=False, stream=capture_logs)
     logger = get_logger("test")
 
     logger.info("test_event", uid="12345")
@@ -170,7 +170,7 @@ def test_no_pii_in_logs_even_in_debug(capture_logs):
     
     This is the most important security test for GDPR compliance.
     """
-    setup_logging("DEBUG", json_format=True)
+    setup_logging("DEBUG", json_format=True, stream=capture_logs)
     logger = get_logger("test")
 
     # Simulate logging with PII fields
@@ -198,7 +198,7 @@ def test_no_pii_in_logs_even_in_debug(capture_logs):
 
 def test_no_pii_in_nested_structures(capture_logs):
     """Test that PII in nested structures is also filtered"""
-    setup_logging("INFO", json_format=True)
+    setup_logging("INFO", json_format=True, stream=capture_logs)
     logger = get_logger("test")
 
     logger.info(

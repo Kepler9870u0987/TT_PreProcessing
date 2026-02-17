@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # Email Preprocessing Service
+  preprocessing:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: email-preprocessing
+    ports:
+      - "8000:8000"
+    environment:
+      # CRITICAL: Set this to a secure random value in production
+      # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+      PREPROCESSING_PII_SALT: ${PREPROCESSING_PII_SALT:-changeme-generate-secure-salt}
+      PREPROCESSING_PIPELINE_VERSION: "1.0.0"
+      PREPROCESSING_LOG_LEVEL: "INFO"
+      PREPROCESSING_SPACY_MODEL: "it_core_news_lg"
+      PREPROCESSING_MAX_BODY_SIZE_KB: "500"
+    volumes:
+      # Mount source code for development (comment out for production)
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - preprocessing-net
+
+  # Optional: Test runner container
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: email-preprocessing-test
+    environment:
+      PREPROCESSING_PII_SALT: "test-salt-for-ci-cd-only-not-production"
+      PREPROCESSING_PIPELINE_VERSION: "test-v1"
+    command: ["pytest", "tests/", "-v", "--cov=src", "--cov-report=html"]
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./htmlcov:/app/htmlcov
+    networks:
+      - preprocessing-net
+    profiles:
+      - test
+
+networks:
+  preprocessing-net:
+    driver: bridge

@@ -84,7 +84,7 @@ def test_canonicalize_remove_disclaimer():
     """Test removal of confidentiality disclaimers"""
     text = """Important email content.
 
-Questo messaggio è indirizzato esclusivamente al destinatario e contiene informazioni confidenziali.
+Questo messaggio è indirizzato esclusivamente al destinatario e può contenere informazioni riservate e confidenziale.
 """
     canon, removed = canonicalize_text(text)
 
