@@ -25,6 +25,27 @@ from src.models import InputEmail, EmailDocument
 from src.config import reset_config_cache
 
 
+def create_test_input_email(**overrides):
+    """Helper to create InputEmail with all required fields and sensible defaults"""
+    defaults = {
+        "uid": "test-uid",
+        "uidvalidity": "1",
+        "mailbox": "INBOX",
+        "from_addr": "test@example.com",
+        "to_addrs": ["recipient@example.com"],
+        "subject": "Test Subject",
+        "date": "2026-02-18T10:00:00Z",
+        "body_text": "Test body",
+        "body_html": "",
+        "size": 100,
+        "headers": {"from": "test@example.com", "subject": "Test Subject"},
+        "message_id": "<test@example.com>",
+        "fetched_at": "2026-02-18T10:00:00Z",
+    }
+    defaults.update(overrides)
+    return InputEmail(**defaults)
+
+
 @pytest.fixture
 def valid_env():
     """Valid environment for config"""
@@ -49,9 +70,11 @@ def cleanup_config():
 def test_preprocess_email_simple(valid_env):
     """Test basic email preprocessing"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<test@example.com>",
-            headers_raw="From: sender@example.com\nSubject: Test\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com", "subject": "Test"},
+            subject="Test",
             body_text="This is a test email.",
         )
         
@@ -59,33 +82,36 @@ def test_preprocess_email_simple(valid_env):
         
         assert isinstance(result, EmailDocument)
         assert result.message_id == "<test@example.com>"
-        assert "test email" in result.body_text.lower()
-        assert result.body_hash != ""
+        assert "test email" in result.body_text_canonical.lower()
+        assert result.body_original_hash != ""
 
 
 def test_preprocess_email_with_pii(valid_env):
     """Test preprocessing with PII detection"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<test-pii@example.com>",
-            headers_raw="From: mario.rossi@example.com\nSubject: Test\n\n",
+            from_addr="mario.rossi@example.com",
+            headers={"from": "mario.rossi@example.com", "subject": "Test"},
+            subject="Test",
             body_text="Contact me at mario.rossi@example.com",
         )
         
         result = preprocess_email(input_email)
         
         # PII should be redacted
-        assert "mario.rossi@example.com" not in result.body_text
-        assert "[PII_EMAIL]" in result.body_text
-        assert len(result.pii_redactions) >= 1
+        assert "mario.rossi@example.com" not in result.body_text_canonical
+        assert "[PII_EMAIL]" in result.body_text_canonical
+        assert len(result.pii_entities) >= 1
 
 
 def test_preprocess_email_with_quotes(valid_env):
     """Test preprocessing with quoted text removal"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<test-quotes@example.com>",
-            headers_raw="From: sender@example.com\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com"},
             body_text="""
 New message here.
 
@@ -97,16 +123,17 @@ New message here.
         result = preprocess_email(input_email)
         
         # Quoted text should be removed
-        assert "New message here" in result.body_text
+        assert "New message here" in result.body_text_canonical
         assert len(result.removed_sections) >= 1
 
 
 def test_preprocess_email_with_signature(valid_env):
     """Test preprocessing with signature removal"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<test-sig@example.com>",
-            headers_raw="From: sender@example.com\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com"},
             body_text="""
 Email body text.
 
@@ -125,16 +152,17 @@ Software Engineer
 def test_preprocess_email_body_hash(valid_env):
     """Test body hash computation"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<test-hash@example.com>",
-            headers_raw="From: sender@example.com\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com"},
             body_text="Test body for hashing",
         )
         
         result = preprocess_email(input_email)
         
-        assert result.body_hash != ""
-        assert len(result.body_hash) == 64  # SHA256 hex digest
+        assert result.body_original_hash != ""
+        assert len(result.body_original_hash) == 64  # SHA256 hex digest
 
 
 def test_compute_body_hash_deterministic():
@@ -171,9 +199,11 @@ Content-Type: text/plain; charset=utf-8
 Full body from raw bytes parse.
 """
         
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<test-raw@example.com>",
-            headers_raw="From: sender@example.com\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com", "subject": "Test"},
+            subject="Test",
             body_text="Truncated body",  # This should be ignored
             raw_bytes=raw_email,
         )
@@ -181,7 +211,7 @@ Full body from raw bytes parse.
         result = preprocess_email(input_email)
         
         # Should use full parse result (not truncated)
-        assert "Full body from raw bytes" in result.body_text or "Truncated body" in result.body_text
+        assert "Full body from raw bytes" in result.body_text_canonical or "Truncated body" in result.body_text_canonical
         # Note: Depends on merge_body_parts logic
 
 
@@ -193,9 +223,10 @@ Full body from raw bytes parse.
 def test_validate_determinism_success(valid_env):
     """Test determinism validation succeeds for same input"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<test-determ@example.com>",
-            headers_raw="From: sender@example.com\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com"},
             body_text="Test determinism",
         )
         
@@ -207,9 +238,10 @@ def test_validate_determinism_success(valid_env):
 def test_preprocess_email_determinism_manual(valid_env):
     """Test that multiple runs produce identical output"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<test-manual-determ@example.com>",
-            headers_raw="From: test@example.com\n\n",
+            from_addr="test@example.com",
+            headers={"from": "test@example.com"},
             body_text="Body with test@example.com email",
         )
         
@@ -218,9 +250,9 @@ def test_preprocess_email_determinism_manual(valid_env):
         # All results should be identical
         first = results[0]
         for result in results[1:]:
-            assert result.body_text == first.body_text
-            assert result.body_hash == first.body_hash
-            assert len(result.pii_redactions) == len(first.pii_redactions)
+            assert result.body_text_canonical == first.body_text_canonical
+            assert result.body_original_hash == first.body_original_hash
+            assert len(result.pii_entities) == len(first.pii_entities)
 
 
 # ==============================================================================
@@ -232,9 +264,10 @@ def test_preprocess_email_batch_multiple(valid_env):
     """Test batch processing of multiple emails"""
     with patch.dict(os.environ, valid_env, clear=True):
         input_emails = [
-            InputEmail(
+            create_test_input_email(
                 message_id=f"<test-{i}@example.com>",
-                headers_raw=f"From: sender{i}@example.com\n\n",
+                from_addr=f"sender{i}@example.com",
+                headers={"from": f"sender{i}@example.com"},
                 body_text=f"Email body {i}",
             )
             for i in range(3)
@@ -251,9 +284,10 @@ def test_preprocess_email_batch_preserves_order(valid_env):
     """Test that batch processing preserves input order"""
     with patch.dict(os.environ, valid_env, clear=True):
         input_emails = [
-            InputEmail(
+            create_test_input_email(
                 message_id=f"<order-{i}@example.com>",
-                headers_raw="From: sender@example.com\n\n",
+                from_addr="sender@example.com",
+                headers={"from": "sender@example.com"},
                 body_text=f"Body {i}",
             )
             for i in range(5)
@@ -270,14 +304,16 @@ def test_preprocess_email_batch_handles_errors(valid_env):
     with patch.dict(os.environ, valid_env, clear=True):
         # Create inputs, one with potential error
         input_emails = [
-            InputEmail(
+            create_test_input_email(
                 message_id="<good1@example.com>",
-                headers_raw="From: sender@example.com\n\n",
+                from_addr="sender@example.com",
+                headers={"from": "sender@example.com"},
                 body_text="Good email 1",
             ),
-            InputEmail(
+            create_test_input_email(
                 message_id="<good2@example.com>",
-                headers_raw="From: sender@example.com\n\n",
+                from_addr="sender@example.com",
+                headers={"from": "sender@example.com"},
                 body_text="Good email 2",
             ),
         ]
@@ -296,9 +332,10 @@ def test_preprocess_email_batch_handles_errors(valid_env):
 def test_create_error_document(valid_env):
     """Test error document creation"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<error@example.com>",
-            headers_raw="From: sender@example.com\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com"},
             body_text="Test",
         )
         
@@ -306,16 +343,17 @@ def test_create_error_document(valid_env):
         
         assert isinstance(error_doc, EmailDocument)
         assert error_doc.message_id == "<error@example.com>"
-        assert "PREPROCESSING ERROR" in error_doc.body_text
-        assert "Test error" in error_doc.body_text
+        assert "PREPROCESSING ERROR" in error_doc.body_text_canonical
+        assert "Test error" in error_doc.body_text_canonical
 
 
 def test_preprocess_email_handles_invalid_headers(valid_env):
     """Test preprocessing with malformed headers"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<malformed@example.com>",
-            headers_raw="Invalid\x00Header\nData",  # Null byte
+            from_addr="sender@example.com",
+            headers={"invalid": "data\x00with null"},
             body_text="Body text",
         )
         
@@ -329,16 +367,17 @@ def test_preprocess_email_handles_invalid_headers(valid_env):
 def test_preprocess_email_handles_empty_body(valid_env):
     """Test preprocessing with empty body"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<empty@example.com>",
-            headers_raw="From: sender@example.com\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com"},
             body_text="",
         )
         
         result = preprocess_email(input_email)
         
         assert isinstance(result, EmailDocument)
-        assert result.body_text == ""
+        assert result.body_text_canonical == ""
 
 
 # ==============================================================================
@@ -349,9 +388,10 @@ def test_preprocess_email_handles_empty_body(valid_env):
 def test_get_preprocessing_stats(valid_env):
     """Test stats extraction from processed email"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<stats@example.com>",
-            headers_raw="From: test@example.com\n\n",
+            from_addr="test@example.com",
+            headers={"from": "test@example.com"},
             body_text="Body with test@example.com",
         )
         
@@ -367,9 +407,10 @@ def test_get_preprocessing_stats(valid_env):
 def test_get_preprocessing_stats_pii_types(valid_env):
     """Test that stats include PII types"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<stats-pii@example.com>",
-            headers_raw="From: sender@example.com\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com"},
             body_text="Email: test@example.com Phone: +39 02 1234567",
         )
         
@@ -388,17 +429,19 @@ def test_get_preprocessing_stats_pii_types(valid_env):
 def test_preprocess_email_unicode(valid_env):
     """Test preprocessing with Unicode characters"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<unicode@example.com>",
-            headers_raw="From: sender@example.com\nSubject: Testo con àccenti\n\n",
+            from_addr="sender@example.com",
+            subject="Testo con àccenti",
+            headers={"from": "sender@example.com", "subject": "Testo con àccenti"},
             body_text="Email con càratteri speciali: €, ñ, 中文",
         )
         
         result = preprocess_email(input_email)
         
         # Unicode should be preserved
-        assert "àccenti" in result.headers.get("subject", "").lower()
-        assert "€" in result.body_text or "càratteri" in result.body_text
+        assert "àccenti" in result.headers_canonical.get("subject", "").lower()
+        assert "€" in result.body_text_canonical or "càratteri" in result.body_text_canonical
 
 
 # ==============================================================================
@@ -411,24 +454,26 @@ def test_preprocess_email_very_long_body(valid_env):
     with patch.dict(os.environ, valid_env, clear=True):
         long_body = "A" * 100_000  # 100KB
         
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<long@example.com>",
-            headers_raw="From: sender@example.com\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com"},
             body_text=long_body,
         )
         
         result = preprocess_email(input_email)
         
         assert isinstance(result, EmailDocument)
-        assert len(result.body_text) > 0
+        assert len(result.body_text_canonical) > 0
 
 
 def test_preprocess_email_special_characters(valid_env):
     """Test preprocessing with special characters"""
     with patch.dict(os.environ, valid_env, clear=True):
-        input_email = InputEmail(
+        input_email = create_test_input_email(
             message_id="<special@example.com>",
-            headers_raw="From: sender@example.com\n\n",
+            from_addr="sender@example.com",
+            headers={"from": "sender@example.com"},
             body_text="Text with <tags> & special chars: @#$%",
         )
         
