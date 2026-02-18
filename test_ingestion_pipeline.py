@@ -50,6 +50,9 @@ def convert_ingestion_to_input_email(ingestion_data: Dict[str, Any]) -> InputEma
     body_text = ingestion_data.get("body_text", "")
     body_truncated = len(body_text) >= 2000 or len(body_html) >= 500
     
+    # Normalizza chiavi headers in lowercase (richiesto dalla pipeline)
+    headers = {k.lower(): v for k, v in ingestion_data.get("headers", {}).items()}
+    
     return InputEmail(
         uid=uid,
         uidvalidity=uidvalidity,
@@ -61,7 +64,7 @@ def convert_ingestion_to_input_email(ingestion_data: Dict[str, Any]) -> InputEma
         body_text=body_text,
         body_html=body_html,
         size=ingestion_data.get("size", 0),
-        headers=ingestion_data.get("headers", {}),
+        headers=headers,
         message_id=ingestion_data.get("message_id", ""),
         fetched_at=ingestion_data.get("fetched_at", ""),
         raw_bytes=None,  # Non disponibile in questo test
@@ -187,10 +190,7 @@ def main():
         
         # Converti result in dict per serializzazione JSON
         from dataclasses import asdict
-        if hasattr(result, 'result') and result.result:
-            output_data = asdict(result.result)
-        else:
-            output_data = asdict(result)
+        output_data = asdict(result)
         
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(output_data, f, indent=2, ensure_ascii=False, default=str)

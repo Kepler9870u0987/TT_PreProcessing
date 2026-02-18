@@ -356,7 +356,7 @@ class PIIDetector:
             text: Testo da analizzare
             
         Returns:
-            Lista PIIRedaction (con span e tipo, testo non modificato)
+            Lista PIIRedaction (con span e tipo, campo redacted contiene valore originale)
         """
         # Detect with regex
         regex_redactions = self.detect_pii_regex(text)
@@ -367,6 +367,12 @@ class PIIDetector:
         # Merge overlapping redactions
         all_redactions = regex_redactions + ner_redactions
         merged_redactions = self.merge_redactions(all_redactions)
+        
+        # In detect_only mode, populate 'redacted' field with original value
+        # (instead of placeholder) for better usability
+        for redaction in merged_redactions:
+            original_value = text[redaction.span_start:redaction.span_end]
+            redaction.redacted = original_value
 
         logger.info("pii_detect_only_complete", total_detections=len(merged_redactions))
         return merged_redactions

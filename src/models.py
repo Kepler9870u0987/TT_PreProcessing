@@ -104,11 +104,14 @@ class PIIRedaction:
     Traccia PII redatti per GDPR compliance e audit trail.
     
     CRITICAL: original_hash permette reversibilità controllata per audit autorizzato.
+    
+    Note: In detect_only mode, il campo 'redacted' contiene il valore originale
+    invece del placeholder, per facilitare l'uso dei dati rilevati.
     """
 
     type: str  # "EMAIL" | "PHONE_IT" | "NAME" | "ORG" | "IBAN" | "PIVA" | "CF"
     original_hash: str  # SHA256(original + salt), truncated to 16 hex chars
-    redacted: str  # "[PII_EMAIL]" | "[PII_NAME]" | etc.
+    redacted: str  # "[PII_EMAIL]" (redact mode) | "mario.rossi@example.it" (detect_only mode)
     span_start: int  # Indice inizio nel testo originale (0-based)
     span_end: int  # Indice fine (0-based, exclusive)
     confidence: float  # 0.0-1.0, detection confidence
