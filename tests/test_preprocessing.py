@@ -480,3 +480,76 @@ def test_preprocess_email_special_characters(valid_env):
         result = preprocess_email(input_email)
         
         assert isinstance(result, EmailDocument)
+
+
+# ==============================================================================
+# TEST PII MODE (detect_only / disabled)
+# ==============================================================================
+
+
+def test_preprocess_pii_mode_redact(valid_env):
+    """Test default pii_mode='redact' - PII replaced with placeholders"""
+    env = {**valid_env, "PREPROCESSING_PII_MODE": "redact"}
+    with patch.dict(os.environ, env, clear=True):
+        input_email = create_test_input_email(
+            message_id="<pii-mode-redact@example.com>",
+            from_addr="mario.rossi@example.com",
+            headers={"from": "mario.rossi@example.com", "subject": "Test PII mode"},
+            body_text="Contattami a mario.rossi@example.com o al +39 335 1234567",
+        )
+
+        result = preprocess_email(input_email)
+
+        # PII should be redacted from text
+        assert "mario.rossi@example.com" not in result.body_text_canonical
+        assert "[PII_EMAIL]" in result.body_text_canonical
+        # pii_entities should be populated
+        assert len(result.pii_entities) >= 1
+
+
+def test_preprocess_pii_mode_detect_only(valid_env):
+    """Test pii_mode='detect_only' - PII detected but text left intact"""
+    env = {**valid_env, "PREPROCESSING_PII_MODE": "detect_only"}
+    with patch.dict(os.environ, env, clear=True):
+        input_email = create_test_input_email(
+            message_id="<pii-mode-detect@example.com>",
+            from_addr="mario.rossi@example.com",
+            headers={"from": "mario.rossi@example.com", "subject": "Test PII mode"},
+            body_text="Contattami a mario.rossi@example.com o al +39 335 1234567",
+        )
+
+        result = preprocess_email(input_email)
+
+        # Text should remain intact (no placeholders)
+        assert "mario.rossi@example.com" in result.body_text_canonical
+        assert "[PII_EMAIL]" not in result.body_text_canonical
+        assert "+39 335 1234567" in result.body_text_canonical
+        # pii_entities should still be populated with detections
+        assert len(result.pii_entities) >= 2
+        pii_types = {r.type for r in result.pii_entities}
+        assert "EMAIL" in pii_types
+        assert "PHONE_IT" in pii_types
+        # Headers should NOT be redacted either
+        assert "mario.rossi@example.com" in result.from_addr_redacted or \
+               "mario.rossi@example.com" in result.headers_canonical.get("from", "")
+
+
+def test_preprocess_pii_mode_disabled(valid_env):
+    """Test pii_mode='disabled' - no PII processing at all"""
+    env = {**valid_env, "PREPROCESSING_PII_MODE": "disabled"}
+    with patch.dict(os.environ, env, clear=True):
+        input_email = create_test_input_email(
+            message_id="<pii-mode-disabled@example.com>",
+            from_addr="mario.rossi@example.com",
+            headers={"from": "mario.rossi@example.com", "subject": "Test PII mode"},
+            body_text="Contattami a mario.rossi@example.com o al +39 335 1234567",
+        )
+
+        result = preprocess_email(input_email)
+
+        # Text should remain intact
+        assert "mario.rossi@example.com" in result.body_text_canonical
+        # pii_entities should be empty
+        assert len(result.pii_entities) == 0
+        # Headers should NOT be redacted
+        assert "mario.rossi@example.com" in result.headers_canonical.get("from", "")

@@ -12,11 +12,24 @@ Usage:
 """
 
 import secrets
+from enum import Enum
 from functools import lru_cache
 from typing import Optional
 
 from pydantic import Field, field_validator, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class PIIMode(str, Enum):
+    """PII processing mode.
+    
+    - redact: Detect PII and replace with placeholders (GDPR default)
+    - detect_only: Detect PII and populate pii_entities, but leave text intact
+    - disabled: Skip PII processing entirely (pii_entities = [])
+    """
+    REDACT = "redact"
+    DETECT_ONLY = "detect_only"
+    DISABLED = "disabled"
 
 
 class PreprocessingConfig(BaseSettings):
@@ -60,6 +73,16 @@ class PreprocessingConfig(BaseSettings):
     # ==========================================================================
     # PII Detection Settings
     # ==========================================================================
+    pii_mode: PIIMode = Field(
+        default=PIIMode.REDACT,
+        description=(
+            "PII processing mode: "
+            "'redact' = detect & replace with placeholders (GDPR default), "
+            "'detect_only' = detect & populate pii_entities but leave text intact, "
+            "'disabled' = skip PII processing entirely"
+        ),
+    )
+
     pii_ner_confidence_threshold: float = Field(
         default=0.75,
         description="Confidence threshold for NER-based PII detection (0.0-1.0)",

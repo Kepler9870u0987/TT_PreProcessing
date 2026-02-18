@@ -342,6 +342,35 @@ class PIIDetector:
         logger.info("pii_detection_complete", total_redactions=len(merged_redactions))
         return redacted_text, merged_redactions
 
+    def detect_only(self, text: str) -> List[PIIRedaction]:
+        """
+        Detect PII senza modificare il testo (detect_only mode).
+        
+        Utile per:
+        - Triage email / routing basato su contenuto
+        - Arricchimento CRM con entità estratte
+        - Analisi AI che necessita del testo integro
+        - Audit / reporting su tipologie PII presenti
+        
+        Args:
+            text: Testo da analizzare
+            
+        Returns:
+            Lista PIIRedaction (con span e tipo, testo non modificato)
+        """
+        # Detect with regex
+        regex_redactions = self.detect_pii_regex(text)
+
+        # Detect with NER
+        ner_redactions = self.detect_pii_ner(text)
+
+        # Merge overlapping redactions
+        all_redactions = regex_redactions + ner_redactions
+        merged_redactions = self.merge_redactions(all_redactions)
+
+        logger.info("pii_detect_only_complete", total_detections=len(merged_redactions))
+        return merged_redactions
+
     def _hash_pii(self, pii_text: str) -> str:
         """
         Hash deterministico di PII per audit trail reversibile.

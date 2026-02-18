@@ -14,7 +14,7 @@ from src.models import InputEmail, EmailDocument, PIIRedaction, PipelineVersion
 from src.parsing import parse_headers_rfc5322, extract_body_parts_from_truncated, merge_body_parts
 from src.canonicalization import canonicalize_text
 from src.pii_detection import get_pii_detector, redact_headers_pii
-from src.config import get_config
+from src.config import get_config, PIIMode
 
 
 logger = structlog.get_logger(__name__)
@@ -81,20 +81,37 @@ def preprocess_email(input_email: InputEmail) -> EmailDocument:
         canonical_body = merged_body
         removed_sections = []
     
-    # STEP 5a: Redact PII in body
+    # STEP 5a: PII processing (based on pii_mode)
+    pii_mode = config.pii_mode
     try:
-        redacted_body, pii_redactions = pii_detector.detect_and_redact(canonical_body)
-        logger.info("pii_redacted_body", redaction_count=len(pii_redactions))
+        if pii_mode == PIIMode.REDACT:
+            # Full redaction: detect + replace text with placeholders
+            redacted_body, pii_redactions = pii_detector.detect_and_redact(canonical_body)
+            logger.info("pii_redacted_body", redaction_count=len(pii_redactions))
+        elif pii_mode == PIIMode.DETECT_ONLY:
+            # Detect only: populate pii_entities but leave text intact
+            pii_redactions = pii_detector.detect_only(canonical_body)
+            redacted_body = canonical_body  # Text unchanged
+            logger.info("pii_detect_only_body", detection_count=len(pii_redactions))
+        else:
+            # Disabled: skip PII processing entirely
+            redacted_body = canonical_body
+            pii_redactions = []
+            logger.info("pii_disabled")
     except Exception as e:
-        logger.error("pii_redaction_failed", error=str(e))
+        logger.error("pii_processing_failed", error=str(e), pii_mode=pii_mode.value)
         # Fallback: no redaction
         redacted_body = canonical_body
         pii_redactions = []
     
-    # STEP 5b: Redact PII in headers
+    # STEP 5b: PII processing for headers
     try:
-        redacted_headers = redact_headers_pii(headers, pii_detector)
-        logger.debug("pii_redacted_headers", header_count=len(redacted_headers))
+        if pii_mode == PIIMode.REDACT:
+            redacted_headers = redact_headers_pii(headers, pii_detector)
+        else:
+            # detect_only and disabled: headers pass through unchanged
+            redacted_headers = headers
+        logger.debug("pii_processed_headers", header_count=len(redacted_headers), pii_mode=pii_mode.value)
     except Exception as e:
         logger.warning("header_redaction_failed", error=str(e))
         redacted_headers = headers

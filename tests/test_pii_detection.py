@@ -564,3 +564,68 @@ def test_golden_dataset_ner_regression(detector):
                     )
         except PIIDetectionError:
             pytest.skip("spaCy model not available")
+
+
+# ==============================================================================
+# TEST DETECT_ONLY MODE
+# ==============================================================================
+
+
+def test_detect_only_returns_detections_without_modifying_text(detector):
+    """Test detect_only returns PII entities but does not modify text"""
+    text = "Contattami a mario.rossi@example.com o chiama +39 335 1234567"
+
+    detections = detector.detect_only(text)
+
+    # Should detect at least email and phone
+    assert len(detections) >= 2
+    pii_types = {d.type for d in detections}
+    assert "EMAIL" in pii_types
+    assert "PHONE_IT" in pii_types
+    # Original text should be unchanged (detect_only doesn't modify)
+    # Verify span references are valid on original text
+    for d in detections:
+        assert d.span_start >= 0
+        assert d.span_end <= len(text)
+        assert d.span_start < d.span_end
+
+
+def test_detect_only_includes_ner_entities(detector):
+    """Test detect_only includes NER-based entities (names, orgs)"""
+    text = "Mario Rossi lavora presso Azienda Example S.r.l."
+
+    detections = detector.detect_only(text)
+
+    # Should detect at least names/orgs via NER
+    pii_types = {d.type for d in detections}
+    assert "NAME" in pii_types or "ORG" in pii_types
+
+
+def test_detect_only_merges_overlapping(detector):
+    """Test detect_only applies merge logic consistently"""
+    text = "Email: mario.rossi@example.com, CF: RSSMRA80A01H501U"
+
+    detections = detector.detect_only(text)
+
+    # Should have no overlapping spans
+    sorted_detections = sorted(detections, key=lambda d: d.span_start)
+    for i in range(len(sorted_detections) - 1):
+        assert sorted_detections[i].span_end <= sorted_detections[i + 1].span_start, \
+            f"Overlapping detections: {sorted_detections[i]} and {sorted_detections[i+1]}"
+
+
+def test_detect_only_vs_detect_and_redact_same_entities(detector):
+    """Test detect_only finds same entities as detect_and_redact"""
+    text = "Mario Rossi, email: mario.rossi@example.com, tel: +39 335 1234567"
+
+    # detect_only
+    detections = detector.detect_only(text)
+
+    # detect_and_redact
+    _, redactions = detector.detect_and_redact(text)
+
+    # Same number and types of entities
+    assert len(detections) == len(redactions)
+    detect_types = sorted([d.type for d in detections])
+    redact_types = sorted([r.type for r in redactions])
+    assert detect_types == redact_types
