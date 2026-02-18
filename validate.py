@@ -42,7 +42,8 @@ except ImportError as e:
 # 3. Check spaCy
 try:
     import spacy
-    check(f"spaCy installed: {spacy.__version__}", True)
+    from spacy.about import __version__ as spacy_version
+    check(f"spaCy installed: {spacy_version}", True)
     try:
         import it_core_news_lg
         check("Italian model (it_core_news_lg)", True)
